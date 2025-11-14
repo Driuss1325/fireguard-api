@@ -1,4 +1,6 @@
 import { sequelize } from "../config/db.js";
+
+// Core
 import User from "./User.js";
 import Device from "./Device.js";
 import DeviceLocationLog from "./DeviceLocationLog.js";
@@ -8,7 +10,10 @@ import Alert from "./Alert.js";
 import AlertThreshold from "./AlertThreshold.js";
 import UserLog from "./UserLog.js";
 import DeviceLog from "./DeviceLog.js";
+
+// Comunidad
 import CommunityPost from "./CommunityPost.js";
+import CommunityComment from "./CommunityComment.js";
 
 // ─────────────────────────────────────────────────────────────
 // Relaciones
@@ -45,9 +50,19 @@ DeviceLocationLog.belongsTo(Device, { foreignKey: "deviceId" });
 Device.hasOne(AlertThreshold, { foreignKey: "deviceId" });
 AlertThreshold.belongsTo(Device, { foreignKey: "deviceId" });
 
+// Comunidad: Post ↔ Comentarios (1:N)
+CommunityPost.hasMany(CommunityComment, {
+  as: "comments",
+  foreignKey: "postId",
+  onDelete: "CASCADE",
+});
+CommunityComment.belongsTo(CommunityPost, {
+  as: "post",
+  foreignKey: "postId",
+});
+
 // ─────────────────────────────────────────────────────────────
 // Exports
-
 export {
   sequelize,
   User,
@@ -60,4 +75,5 @@ export {
   UserLog,
   DeviceLog,
   CommunityPost,
+  CommunityComment,
 };

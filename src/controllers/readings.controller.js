@@ -6,14 +6,13 @@ import {
 } from "../models/index.js";
 import { evaluateAndCreateAlerts } from "../services/alert.service.js";
 import { emitReading, emitAlert } from "../services/socket.service.js";
-import { sendAlertEmail } from "../services/email.service.js"; // ⟵ NUEVO
+import { sendAlertEmail } from "../services/email.service.js";
 import { Op } from "sequelize";
 
 export async function ingestReading(req, res) {
   const { temperature, humidity, pm25, pm10, lat, lng, accuracy } = req.body;
   const deviceId = req.device.id;
 
-  // 1) Persistir lectura
   const reading = await Reading.create({
     deviceId,
     temperature,
@@ -22,7 +21,6 @@ export async function ingestReading(req, res) {
     pm10,
   });
 
-  // 2) Notificar por WebSocket la lectura
   emitReading({
     deviceId,
     temperature,
@@ -34,7 +32,6 @@ export async function ingestReading(req, res) {
     lng,
   });
 
-  // 3) Actualizar ubicación si cambió (y loguear)
   if (lat != null && lng != null) {
     const device = await Device.findByPk(deviceId);
     const moved =
@@ -62,7 +59,6 @@ export async function ingestReading(req, res) {
     }
   }
 
-  // 4) Evaluar reglas y crear alertas
   const alerts = await evaluateAndCreateAlerts(deviceId, {
     temperature,
     humidity,
@@ -70,12 +66,8 @@ export async function ingestReading(req, res) {
     pm10,
   });
 
-  // 5) Emitir alertas por WS
   for (const a of alerts) emitAlert(a);
 
-  // 6) Enviar emails por cada alerta (API SES) SIN bloquear la respuesta
-  //    - Enviamos en paralelo
-  //    - Registramos logs de éxito/falla
   if (alerts.length) {
     const sendJobs = alerts.map(async (a) => {
       try {
@@ -86,7 +78,6 @@ export async function ingestReading(req, res) {
           details: { alertId: a.id, type: a.type, level: a.level },
         });
       } catch (err) {
-        // No romper el flujo si falla el correo; dejar evidencia en logs
         await DeviceLog.create({
           deviceId,
           event: "ALERT_EMAIL_FAILED",
@@ -99,20 +90,15 @@ export async function ingestReading(req, res) {
         });
       }
     });
-
-    // Ejecutar en background (no esperes para responder al dispositivo)
-    // Si prefieres esperar, usa: await Promise.allSettled(sendJobs);
     Promise.allSettled(sendJobs).catch(() => {});
   }
 
-  // 7) Log general de ingesta
   await DeviceLog.create({
     deviceId,
     event: "READING_INGESTED",
     details: { temperature, humidity, pm25, pm10 },
   });
 
-  // 8) Responder inmediatamente
   res.status(201).json({ ok: true });
 }
 
@@ -127,7 +113,9 @@ export async function getReadings(req, res, next) {
       String(req.query.order || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
 
     const since = req.query.since ? new Date(req.query.since) : null;
-    const to = req.query.to ? new Date(req.query.to) : null;
+    // acepta ?to=... o ?until=...
+    const toRaw = req.query.to ?? req.query.until;
+    const to = toRaw ? new Date(toRaw) : null;
 
     const where = {};
     if (deviceId != null && deviceId !== "") where.deviceId = Number(deviceId);
@@ -153,6 +141,7 @@ export async function getReadings(req, res, next) {
       ],
     });
 
+    // respondemos consistente con tu front
     res.json({ data: rows });
   } catch (err) {
     next?.(err) ?? res.status(500).json({ error: "Internal error" });
